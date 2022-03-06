@@ -1,0 +1,34 @@
+{
+  "trainModel1": [],
+
+  "trainModel2": [],
+
+  "uploadModel1": [
+    "trainModel1"
+  ],
+
+  "createEndpoint1": [
+    "uploadModel1"
+  ],
+
+  "deployModelToEndpoint1": [
+    "createEndpoint1"
+  ],
+
+  "uploadModel2": [
+    "trainModel"
+  ],
+
+  "createEndpoint2": [
+    "uploadModel2"
+  ],
+
+  "deployModelToEndpoint2": [
+    "createEndpoint2"
+  ],
+
+  "inferencePipeline": [
+    "deployModelToEndpoint1",
+    "deployModelToEndpoint2"
+  ]
+}

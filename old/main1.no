@@ -1,0 +1,252 @@
+package main
+
+/*
+	- child spec
+	- child waits on parent channels
+*/
+
+import (
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+)
+
+var m = `
+	{
+		"c": [ "z" ],
+		"a": [ "b", "d", "z" ],
+		"d": [ "c", "z" ],
+		"b": [ "c", "d", "z" ],
+		"z": []
+	}
+`
+
+type Ready struct {
+	ch    chan struct{}
+	chans map[string]chan struct{}
+}
+
+func (r *Ready) start(v *Vertex) {
+	for {
+		var count int
+
+		for _, r := range r.chans {
+			select {
+			case <-r:
+				count++
+
+			default:
+				time.Sleep(1 * time.Second)
+				fmt.Println("vertex not ready yet:", v.ID)
+			}
+		}
+
+		if count == len(r.chans) {
+			fmt.Println("vertex is ready:", v.ID)
+
+			processVertex(v)
+
+			close(r.ch)
+
+			return
+		}
+	}
+}
+
+type Spec map[string][]string
+
+type Vertex struct {
+	sync.Mutex
+
+	ID string
+
+	running  bool
+	done     bool
+	isSource bool
+	isSink   bool
+
+	fn  func(*Vertex)
+	err error
+
+	ready Ready
+
+	// TODO(scottshotgg): make children a sub-DAG
+	children map[string]*Vertex
+}
+
+type DAG struct {
+	SourceV   map[string]*Vertex
+	SinkV     map[string]*Vertex
+	Verticies map[string]*Vertex
+}
+
+// func (d DAG) String() string {
+// 	var s string
+
+// 	s += fmt.Sprintln("\nVerticies:")
+// 	for _, v := range d.Verticies {
+// 		s += fmt.Sprintln("Vertex:", v.ID)
+// 		for _, c := range v.children {
+// 			s += fmt.Sprintln("Child:", c.ID)
+// 		}
+
+// 		s += fmt.Sprintf("\n")
+// 	}
+
+// 	s += fmt.Sprintln("\nSources:")
+// 	for _, v := range d.SourceV {
+// 		s += fmt.Sprintln("source:", v.ID)
+// 	}
+
+// 	s += fmt.Sprintln("\nSinks:")
+// 	for _, v := range d.SinkV {
+// 		s += fmt.Sprintln("sink:", v.ID)
+// 	}
+// 	return s
+// }
+
+func werk(v *Vertex) {
+	// If the vertex is already finished or still running
+	if v.done || v.running {
+		return
+	}
+
+	v.running = true
+	fmt.Println("running:", v.ID)
+
+	time.Sleep(5 * time.Second)
+
+	fmt.Println("done running:", v.ID)
+	v.done = true
+}
+
+func BuildDAG() *DAG {
+	var s Spec
+	var err = json.Unmarshal([]byte(m), &s)
+	if err != nil {
+		panic(err)
+	}
+
+	var d = DAG{
+		SourceV:   map[string]*Vertex{},
+		SinkV:     map[string]*Vertex{},
+		Verticies: map[string]*Vertex{},
+	}
+
+	for name, children := range s {
+		var v, ok = d.Verticies[name]
+		if !ok {
+			v = &Vertex{
+				ID:       name,
+				fn:       werk,
+				isSource: true,
+				children: map[string]*Vertex{},
+				ready: Ready{
+					ch:    make(chan struct{}),
+					chans: map[string]chan struct{}{},
+				},
+			}
+
+			d.Verticies[name] = v
+			d.SourceV[name] = v
+		}
+
+		if !v.isSource {
+			delete(d.SourceV, name)
+		}
+
+		if len(children) == 0 {
+			v.isSink = true
+			d.SinkV[name] = v
+
+			continue
+		}
+
+		for _, n := range children {
+			var child, ok = d.Verticies[n]
+			if !ok {
+				child = &Vertex{
+					ID:       n,
+					fn:       werk,
+					isSource: false,
+					children: map[string]*Vertex{},
+
+					ready: Ready{
+						ch:    make(chan struct{}),
+						chans: map[string]chan struct{}{},
+					},
+				}
+			}
+
+			child.ready.chans[name] = v.ready.ch
+
+			delete(d.SourceV, n)
+
+			v.children[n] = child
+			d.Verticies[n] = child
+		}
+	}
+
+	return &d
+}
+
+func processDAG(d *DAG) {
+	// Start from the source nodes
+	// processVerticies(d.SourceV)
+	processVerticies2(d.Verticies)
+}
+
+func processVerticies2(vs map[string]*Vertex) {
+	var wg sync.WaitGroup
+
+	// for _, v := range vs {
+	// 	v := v
+	// }
+
+	// Start from the source nodes
+	for _, v := range vs {
+		fmt.Println()
+
+		wg.Add(1)
+
+		go func(v *Vertex) {
+			defer wg.Done()
+
+			// processVertex(v)
+			v.ready.start(v)
+		}(v)
+	}
+
+	wg.Wait()
+}
+
+func processVerticies(vs map[string]*Vertex) {
+	var wg sync.WaitGroup
+
+	// Start from the source nodes
+	for _, v := range vs {
+		fmt.Println()
+
+		wg.Add(1)
+		go func(v *Vertex) {
+			defer wg.Done()
+
+			processVertex(v)
+		}(v)
+	}
+
+	wg.Wait()
+}
+
+func processVertex(v *Vertex) {
+	v.Lock()
+	defer v.Unlock()
+
+	fmt.Println("Processing:", v.ID)
+
+	v.fn(v)
+	if v.err != nil {
+		fmt.Println("err:", v.err)
+	}
+}
